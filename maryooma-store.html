@@ -274,21 +274,11 @@
   body.dark .filter-btn { background:#0d3a32; border-color:#0d2420; color:#6aada3; }
   body.dark .dept-info h3, body.dark .user-name, body.dark .modal-name, body.dark .page-header h1 { color:#e2e8f4; }
 </style>
-  <!-- Firebase -->
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+  <!-- Firebase vars -->
   <script>
-    const firebaseConfig = {
-  apiKey: "AIzaSyDURhX6GuFA0tpgZOgZoUc_LLngk9c4s-s",
-  authDomain: "maryooma-store-e269e.firebaseapp.com",
-  databaseURL: "https://maryooma-store-e269e-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "maryooma-store-e269e",
-  storageBucket: "maryooma-store-e269e.firebasestorage.app",
-  messagingSenderId: "270636061067",
-  appId: "1:270636061067:web:a6d8b87fa59d95ef065f8e"
-    };
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.database();
+    var db = null;
+    var firebaseReady = false;
+  </script>
     
     // ── Firebase Save/Load ──
     function saveToFirebase(data){
@@ -1755,41 +1745,74 @@ function doLogin(){
     return;
   }
   currentUser=found;
-  // Load data from Firebase (shared between all supervisors)
-  if(typeof firebase!=='undefined' && typeof db!=='undefined'){
-    showToast('🔄 جاري تحميل البيانات...','success');
-    db.ref('maryooma').once('value').then(function(snap){
-      const data = snap.val();
-      console.log('Firebase data loaded:', data ? 'YES' : 'EMPTY');
-      if(data){
-        if(data.departments && data.departments.length) departments.splice(0,departments.length,...data.departments);
-        if(data.apps && data.apps.length) apps.splice(0,apps.length,...data.apps);
-        if(data.trashBin && data.trashBin.length) trashBin.splice(0,trashBin.length,...data.trashBin);
-        if(data.activityLog && data.activityLog.length) activityLog.splice(0,activityLog.length,...data.activityLog);
-        showToast('✅ تم تحميل البيانات','success');
-      } else {
-        showToast('📭 قاعدة البيانات فارغة','success');
-      }
+  // Load data - ننتظر Firebase يجهز أولاً
+  showToast('🔄 جاري تحميل البيانات...','success');
+  function doLoadAfterLogin(){
+    if(firebaseReady && db){
+      var fbTimeout = setTimeout(function(){
+        loadData();
+        renderDepts(departments);
+        renderUsers(users);
+        updateTrashBadge();
+        showToast('⚡ تم التحميل من الذاكرة المحلية','success');
+      }, 8000);
+      db.ref('maryooma').once('value').then(function(snap){
+        clearTimeout(fbTimeout);
+        const data = snap.val();
+        if(data){
+          if(data.departments&&Array.isArray(data.departments)&&data.departments.length) departments.splice(0,departments.length,...data.departments);
+          if(data.apps&&Array.isArray(data.apps)&&data.apps.length) apps.splice(0,apps.length,...data.apps);
+          if(data.trashBin&&Array.isArray(data.trashBin)) trashBin.splice(0,trashBin.length,...data.trashBin);
+          if(data.activityLog&&Array.isArray(data.activityLog)) activityLog.splice(0,activityLog.length,...data.activityLog);
+          showToast('✅ تم تحميل البيانات','success');
+        } else {
+          loadData();
+          showToast('📭 تم التحميل من الذاكرة المحلية','success');
+        }
+        renderDepts(departments);
+        renderUsers(users);
+        updateTrashBadge();
+        db.ref('maryooma').on('value', function(snap2){
+          const d2=snap2.val();
+          if(!d2||!currentUser) return;
+          if(d2.departments&&Array.isArray(d2.departments)&&d2.departments.length) departments.splice(0,departments.length,...d2.departments);
+          if(d2.apps&&Array.isArray(d2.apps)&&d2.apps.length) apps.splice(0,apps.length,...d2.apps);
+          if(d2.trashBin&&Array.isArray(d2.trashBin)) trashBin.splice(0,trashBin.length,...d2.trashBin);
+          if(d2.activityLog&&Array.isArray(d2.activityLog)) activityLog.splice(0,activityLog.length,...d2.activityLog);
+          renderDepts(departments);
+          updateTrashBadge();
+        });
+      }).catch(function(err){
+        clearTimeout(fbTimeout);
+        loadData();
+        renderDepts(departments);
+        renderUsers(users);
+        updateTrashBadge();
+        showToast('⚡ تم التحميل من الذاكرة المحلية','success');
+      });
+    } else {
+      loadData();
       renderDepts(departments);
       renderUsers(users);
       updateTrashBadge();
-      // Start real-time sync
-      db.ref('maryooma').on('value', function(snap2){
-        const d2=snap2.val();
-        if(!d2||!currentUser) return;
-        if(d2.departments&&d2.departments.length) departments.splice(0,departments.length,...d2.departments);
-        if(d2.apps&&d2.apps.length) apps.splice(0,apps.length,...d2.apps);
-        if(d2.trashBin) trashBin.splice(0,trashBin.length,...d2.trashBin);
-        if(d2.activityLog) activityLog.splice(0,activityLog.length,...d2.activityLog);
-        renderDepts(departments);
-        updateTrashBadge();
-      });
-    }).catch(function(err){
-      console.error('Firebase load error:', err);
-      showToast('⚠️ خطأ في تحميل البيانات','error');
-    });
+      showToast('⚡ وضع عدم الاتصال','success');
+    }
+  }
+  // ننتظر Firebase بحد أقصى 5 ثوان
+  if(firebaseReady){
+    doLoadAfterLogin();
   } else {
-    console.warn('Firebase not available - using localStorage only');
+    var waitFB = 0;
+    var fbWaitInterval = setInterval(function(){
+      waitFB += 200;
+      if(firebaseReady){
+        clearInterval(fbWaitInterval);
+        doLoadAfterLogin();
+      } else if(waitFB >= 5000){
+        clearInterval(fbWaitInterval);
+        doLoadAfterLogin();
+      }
+    }, 200);
   }
   // Log this login
   logActivity('تسجيل دخول', found.username+' ('+(found.role==='admin'?'مشرف أساسي':'مشرف ثانوي')+')');
@@ -1862,6 +1885,23 @@ function applyRolePermissions(){
   if(!isAdmin && currentPage==='users') showMain('departments');
 }
 function doLogout(){
+  // حفظ البيانات قبل الخروج
+  saveData();
+  if(firebaseReady && db && currentUser){
+    try{
+      const fbData={
+        departments:JSON.parse(JSON.stringify(departments)),
+        apps:JSON.parse(JSON.stringify(apps)),
+        trashBin:JSON.parse(JSON.stringify(trashBin||[])),
+        activityLog:JSON.parse(JSON.stringify(activityLog||[])),
+        lastUpdated:Date.now(),
+        updatedBy:currentUser?currentUser.username:'—'
+      };
+      db.ref('maryooma').set(fbData)
+        .then(()=>console.log('✅ تم الحفظ عند الخروج'))
+        .catch(e=>console.error('خطأ في الحفظ:',e));
+    }catch(e){}
+  }
   document.getElementById('app-shell').classList.remove('active');
   const lp=document.getElementById('login-page');
   lp.style.display='flex';lp.style.opacity='0';
@@ -3515,7 +3555,7 @@ function saveData(){
   }catch(e){}
   // Save to Firebase (shared between all supervisors)
   try{
-    if(typeof firebase!=='undefined' && typeof db!=='undefined'){
+    if(firebaseReady && db){
       const fbData = {
         departments: JSON.parse(JSON.stringify(departments)),
         apps: JSON.parse(JSON.stringify(apps)),
@@ -3901,6 +3941,18 @@ try{
   }
 }catch(e){}
 renderDepts(departments);renderUsers(users);updateStats();
+
+// ── حفظ تلقائي عند إغلاق المتصفح أو مغادرة الصفحة ──
+window.addEventListener('beforeunload', function(){
+  if(currentUser){ saveData(); }
+});
+window.addEventListener('visibilitychange', function(){
+  if(document.visibilityState === 'hidden' && currentUser){ saveData(); }
+});
+// ── حفظ تلقائي كل 60 ثانية ──
+setInterval(function(){
+  if(currentUser){ saveData(); }
+}, 60000);
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&document.getElementById('login-page').classList.contains('active'))doLogin();
   if(e.key==='Escape'){
@@ -3908,6 +3960,53 @@ document.addEventListener('keydown',e=>{
     document.getElementById('edit-modal').classList.remove('open');
   }
 });
+</script>
+
+<!-- Firebase - يُحمَّل في آخر الصفحة لضمان التحميل الصحيح -->
+<script>
+function loadFirebase(){
+  var s1 = document.createElement('script');
+  s1.src = 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js';
+  s1.onload = function(){
+    var s2 = document.createElement('script');
+    s2.src = 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js';
+    s2.onload = function(){
+      try{
+        const firebaseConfig = {
+          apiKey: "AIzaSyDURhX6GuFA0tpgZOgZoUc_LLngk9c4s-s",
+          authDomain: "maryooma-store-e269e.firebaseapp.com",
+          databaseURL: "https://maryooma-store-e269e-default-rtdb.asia-southeast1.firebasedatabase.app",
+          projectId: "maryooma-store-e269e",
+          storageBucket: "maryooma-store-e269e.firebasestorage.app",
+          messagingSenderId: "270636061067",
+          appId: "1:270636061067:web:a6d8b87fa59d95ef065f8e"
+        };
+        firebase.initializeApp(firebaseConfig);
+        db = firebase.database();
+        firebaseReady = true;
+        console.log('✅ Firebase initialized');
+        // إذا كان المستخدم مسجل دخول، ابدأ المزامنة الفورية
+        if(currentUser){
+          db.ref('maryooma').on('value', function(snap){
+            const d=snap.val();
+            if(!d||!currentUser) return;
+            if(d.departments&&Array.isArray(d.departments)&&d.departments.length) departments.splice(0,departments.length,...d.departments);
+            if(d.apps&&Array.isArray(d.apps)&&d.apps.length) apps.splice(0,apps.length,...d.apps);
+            if(d.trashBin&&Array.isArray(d.trashBin)) trashBin.splice(0,trashBin.length,...d.trashBin);
+            if(d.activityLog&&Array.isArray(d.activityLog)) activityLog.splice(0,activityLog.length,...d.activityLog);
+            renderDepts(departments);
+            updateTrashBadge();
+          });
+        }
+      }catch(e){ console.error('Firebase init error:',e); }
+    };
+    s2.onerror = function(){ console.warn('Firebase database SDK failed to load'); };
+    document.head.appendChild(s2);
+  };
+  s1.onerror = function(){ console.warn('Firebase app SDK failed to load'); };
+  document.head.appendChild(s1);
+}
+loadFirebase();
 </script>
 </body>
 </html>
