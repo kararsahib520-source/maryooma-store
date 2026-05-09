@@ -274,48 +274,61 @@
   body.dark .filter-btn { background:#0d3a32; border-color:#0d2420; color:#6aada3; }
   body.dark .dept-info h3, body.dark .user-name, body.dark .modal-name, body.dark .page-header h1 { color:#e2e8f4; }
 </style>
-  <!-- Firebase vars -->
   <script>
     var db = null;
     var firebaseReady = false;
-  </script>
-    
-    // ── Firebase Save/Load ──
-    function saveToFirebase(data){
-      db.ref('maryooma').set(data).catch(e=>console.warn('Firebase save error:',e));
+    var firebaseConfig = {
+      apiKey: "AIzaSyDURhX6GuFA0tpgZOgZoUc_LLngk9c4s-s",
+      authDomain: "maryooma-store-e269e.firebaseapp.com",
+      databaseURL: "https://maryooma-store-e269e-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "maryooma-store-e269e",
+      storageBucket: "maryooma-store-e269e.firebasestorage.app",
+      messagingSenderId: "270636061067",
+      appId: "1:270636061067:web:a6d8b87fa59d95ef065f8e"
+    };
+    function initFirebase(){
+      try{
+        if(typeof firebase !== 'undefined'){
+          if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+          db = firebase.database();
+          firebaseReady = true;
+          console.log("✅ Firebase ready");
+        } else {
+          console.error("Firebase init error: firebase is not defined");
+        }
+      }catch(e){ console.error("Firebase init error:", e); }
     }
-    function loadFromFirebase(callback){
-      db.ref('maryooma').once('value').then(snap=>{
-        const data = snap.val();
-        if(data) callback(data);
-      }).catch(e=>{ console.warn('Firebase load error:',e); callback(null); });
+    // تحميل Firebase من CDNs متعددة
+    function loadScript(src, onload, onerror){
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = onload;
+      s.onerror = onerror;
+      document.head.appendChild(s);
     }
-    function syncFromFirebase(){
-      db.ref('maryooma').on('value', snap=>{
-        const data = snap.val();
-        if(!data || !currentUser) return;
-        // Update departments
-        if(data.departments && data.departments.length){
-          departments.splice(0,departments.length,...data.departments);
-        }
-        // Update apps
-        if(data.apps && data.apps.length){
-          apps.splice(0,apps.length,...data.apps);
-        }
-        // Update trash
-        if(data.trashBin){
-          trashBin.splice(0,trashBin.length,...data.trashBin);
-        }
-        // Update activity
-        if(data.activityLog){
-          activityLog.splice(0,activityLog.length,...data.activityLog);
-        }
-        // Re-render current page
-        if(typeof renderDepts==='function') renderDepts(departments);
-        if(typeof renderApps==='function' && typeof currentPage!=='undefined' && currentPage==='apps') renderApps();
-        if(typeof updateTrashBadge==='function') updateTrashBadge();
-      });
+    function tryLoadFirebase(cdns, idx){
+      if(idx >= cdns.length){ console.error("All Firebase CDNs failed"); return; }
+      loadScript(cdns[idx][0], function(){
+        loadScript(cdns[idx][1], function(){
+          initFirebase();
+        }, function(){ tryLoadFirebase(cdns, idx+1); });
+      }, function(){ tryLoadFirebase(cdns, idx+1); });
     }
+    var firebaseCDNs = [
+      [
+        'https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js',
+        'https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js'
+      ],
+      [
+        'https://cdn.jsdelivr.net/npm/firebase@10.7.1/firebase-app-compat.min.js',
+        'https://cdn.jsdelivr.net/npm/firebase@10.7.1/firebase-database-compat.min.js'
+      ],
+      [
+        'https://unpkg.com/firebase@10.7.1/firebase-app-compat.js',
+        'https://unpkg.com/firebase@10.7.1/firebase-database-compat.js'
+      ]
+    ];
+    tryLoadFirebase(firebaseCDNs, 0);
   </script>
 </head>
 <body>
@@ -1759,15 +1772,29 @@ function doLogin(){
       db.ref('maryooma').once('value').then(function(snap){
         clearTimeout(fbTimeout);
         const data = snap.val();
-        if(data){
-          if(data.departments&&Array.isArray(data.departments)&&data.departments.length) departments.splice(0,departments.length,...data.departments);
+        if(data && data.departments && Array.isArray(data.departments) && data.departments.length){
+          // Firebase له بيانات - استخدمها
+          departments.splice(0,departments.length,...data.departments);
           if(data.apps&&Array.isArray(data.apps)&&data.apps.length) apps.splice(0,apps.length,...data.apps);
           if(data.trashBin&&Array.isArray(data.trashBin)) trashBin.splice(0,trashBin.length,...data.trashBin);
           if(data.activityLog&&Array.isArray(data.activityLog)) activityLog.splice(0,activityLog.length,...data.activityLog);
+          // حفظ في localStorage كنسخة احتياطية
+          try{
+            localStorage.setItem('ms_depts', JSON.stringify(departments));
+            localStorage.setItem('ms_apps', JSON.stringify(apps));
+          }catch(e){}
           showToast('✅ تم تحميل البيانات','success');
         } else {
+          // Firebase فارغ - حاول من localStorage ثم ارفعها لـ Firebase
           loadData();
-          showToast('📭 تم التحميل من الذاكرة المحلية','success');
+          if(departments.length > 0){
+            showToast('⚡ تم التحميل من الذاكرة المحلية','success');
+            // ارفع البيانات المحلية لـ Firebase
+            var fbUp={departments:JSON.parse(JSON.stringify(departments)),apps:JSON.parse(JSON.stringify(apps)),trashBin:JSON.parse(JSON.stringify(trashBin||[])),activityLog:JSON.parse(JSON.stringify(activityLog||[])),lastUpdated:Date.now(),updatedBy:currentUser?currentUser.username:'—'};
+            db.ref('maryooma').set(fbUp).catch(e=>console.error('Upload error:',e));
+          } else {
+            showToast('📭 لا توجد بيانات','success');
+          }
         }
         renderDepts(departments);
         renderUsers(users);
@@ -2311,8 +2338,27 @@ function saveSubscriber(){
   dept.courses.push({name, code:tg.startsWith('@')?tg:'@'+tg, year:formatted, type:selectedSubType, status, price});
   document.getElementById('add-sub-modal').classList.remove('open');
   openDept(dept);
-  saveData();
-  showToast('✅ تمت إضافة المشترك بنجاح','success');
+  // حفظ فوري في localStorage
+  try{
+    localStorage.setItem('ms_depts', JSON.stringify(departments));
+    localStorage.setItem('ms_apps', JSON.stringify(apps));
+  }catch(e){}
+  // حفظ في Firebase مع تأكيد
+  if(firebaseReady && db){
+    var fbData={
+      departments:JSON.parse(JSON.stringify(departments)),
+      apps:JSON.parse(JSON.stringify(apps)),
+      trashBin:JSON.parse(JSON.stringify(trashBin||[])),
+      activityLog:JSON.parse(JSON.stringify(activityLog||[])),
+      lastUpdated:Date.now(),
+      updatedBy:currentUser?currentUser.username:'—'
+    };
+    db.ref('maryooma').set(fbData)
+      .then(()=>showToast('✅ تمت إضافة المشترك وحُفظ','success'))
+      .catch(()=>showToast('✅ تمت الإضافة (محلي)','success'));
+  } else {
+    showToast('✅ تمت إضافة المشترك بنجاح','success');
+  }
 }
 
 /* ── EDIT SUBSCRIBER ── */
@@ -3962,51 +4008,6 @@ document.addEventListener('keydown',e=>{
 });
 </script>
 
-<!-- Firebase - يُحمَّل في آخر الصفحة لضمان التحميل الصحيح -->
-<script>
-function loadFirebase(){
-  var s1 = document.createElement('script');
-  s1.src = 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js';
-  s1.onload = function(){
-    var s2 = document.createElement('script');
-    s2.src = 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js';
-    s2.onload = function(){
-      try{
-        const firebaseConfig = {
-          apiKey: "AIzaSyDURhX6GuFA0tpgZOgZoUc_LLngk9c4s-s",
-          authDomain: "maryooma-store-e269e.firebaseapp.com",
-          databaseURL: "https://maryooma-store-e269e-default-rtdb.asia-southeast1.firebasedatabase.app",
-          projectId: "maryooma-store-e269e",
-          storageBucket: "maryooma-store-e269e.firebasestorage.app",
-          messagingSenderId: "270636061067",
-          appId: "1:270636061067:web:a6d8b87fa59d95ef065f8e"
-        };
-        firebase.initializeApp(firebaseConfig);
-        db = firebase.database();
-        firebaseReady = true;
-        console.log('✅ Firebase initialized');
-        // إذا كان المستخدم مسجل دخول، ابدأ المزامنة الفورية
-        if(currentUser){
-          db.ref('maryooma').on('value', function(snap){
-            const d=snap.val();
-            if(!d||!currentUser) return;
-            if(d.departments&&Array.isArray(d.departments)&&d.departments.length) departments.splice(0,departments.length,...d.departments);
-            if(d.apps&&Array.isArray(d.apps)&&d.apps.length) apps.splice(0,apps.length,...d.apps);
-            if(d.trashBin&&Array.isArray(d.trashBin)) trashBin.splice(0,trashBin.length,...d.trashBin);
-            if(d.activityLog&&Array.isArray(d.activityLog)) activityLog.splice(0,activityLog.length,...d.activityLog);
-            renderDepts(departments);
-            updateTrashBadge();
-          });
-        }
-      }catch(e){ console.error('Firebase init error:',e); }
-    };
-    s2.onerror = function(){ console.warn('Firebase database SDK failed to load'); };
-    document.head.appendChild(s2);
-  };
-  s1.onerror = function(){ console.warn('Firebase app SDK failed to load'); };
-  document.head.appendChild(s1);
-}
-loadFirebase();
-</script>
+
 </body>
 </html>
